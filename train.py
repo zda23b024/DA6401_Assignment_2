@@ -14,8 +14,8 @@ import wandb
 # Correct imports based on your folder structure
 from data.pets_dataset import OxfordIIITPetDataset
 from models.classification import VGG11Classifier
-from models.localization import LocalizerModel
-from models.segmentation import UNet
+from models.localization import VGG11Localizer
+from models.segmentation import VGG11UNet
 
 
 def train_classifier(
@@ -38,16 +38,16 @@ def train_classifier(
         }
     )
 
-    # Dataset & loader
     dataset = OxfordIIITPetDataset(root_dir=data_dir)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    # Model
     model = VGG11Classifier(num_classes=37).to(device)
 
-    # Loss & optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    
+    # Optional: learning rate scheduler for better accuracy
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
 
     os.makedirs("checkpoints", exist_ok=True)
     wandb.watch(model, log="all")
@@ -77,7 +77,8 @@ def train_classifier(
             "learning_rate": optimizer.param_groups[0]["lr"]
         })
 
-    # Save classifier
+        scheduler.step()  # Update LR if scheduler is used
+
     save_path = "checkpoints/classifier.pth"
     torch.save(model.state_dict(), save_path)
     artifact = wandb.Artifact("classifier_model", type="model")
@@ -110,8 +111,8 @@ def train_localizer(
     dataset = OxfordIIITPetDataset(root_dir=data_dir)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    model = LocalizerModel(num_classes=37).to(device)
-    criterion = nn.MSELoss()  # Assuming regression-style localization
+    model = VGG11Localizer().to(device)
+    criterion = nn.SmoothL1Loss()  # More stable for bounding boxes
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     os.makedirs("checkpoints", exist_ok=True)
@@ -121,8 +122,8 @@ def train_localizer(
         model.train()
         total_loss = 0.0
 
-        for images, _, boxes, _ in dataloader:  # boxes: bounding boxes
-            images, boxes = images.to(device), boxes.to(device)
+        for images, _, boxes, _ in dataloader:
+            images, boxes = images.to(device), boxes.to(device).float()  # Ensure float
 
             preds = model(images)
             loss = criterion(preds, boxes)
@@ -171,11 +172,11 @@ def train_segmentation(
         }
     )
 
-    dataset = OxfordIIITPetDataset(root_dir=data_dir, mask=True)  # Assuming mask=True returns segmentation masks
+    dataset = OxfordIIITPetDataset(root_dir=data_dir, mask=True)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    model = UNet(num_classes=37).to(device)
-    criterion = nn.CrossEntropyLoss()  # Assuming masks are class indices
+    model = VGG11UNet(num_classes=37).to(device)
+    criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     os.makedirs("checkpoints", exist_ok=True)
@@ -186,7 +187,7 @@ def train_segmentation(
         total_loss = 0.0
 
         for images, _, _, masks in dataloader:
-            images, masks = images.to(device), masks.to(device)
+            images, masks = images.to(device), masks.to(device).long()  # ✅ convert to Long
 
             outputs = model(images)
             loss = criterion(outputs, masks)
