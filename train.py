@@ -1,5 +1,4 @@
-"""Training entrypoint
-"""
+"""Training entrypoint"""
 
 import os
 
@@ -11,6 +10,17 @@ import wandb
 
 from data.pets_dataset import OxfordIIITPetDataset
 from models.classification import VGG11Classifier
+
+# 🔹 OPTIONAL: Import if available (won’t break if not used)
+try:
+    from models.localization import Localizer
+except:
+    Localizer = None
+
+try:
+    from models.segmentation import UNet
+except:
+    UNet = None
 
 
 def train_classifier(
@@ -81,15 +91,42 @@ def train_classifier(
             "learning_rate": optimizer.param_groups[0]["lr"]
         })
 
-    # Save model
-    save_path = "checkpoints/classifier.pth"
-    torch.save(model.state_dict(), save_path)
+    # =========================
+    # ✅ SAVE ALL MODELS SAFELY
+    # =========================
 
-    print(f"✅ Classifier saved at {save_path}")
+    # Save classifier
+    classifier_path = "checkpoints/classifier.pth"
+    torch.save(model.state_dict(), classifier_path)
+    print(f"✅ Classifier saved at {classifier_path}")
 
-    # 🔹 Save model artifact in W&B
+    # 🔹 Try saving Localizer (only if defined)
+    if Localizer is not None:
+        try:
+            localizer = Localizer().to(device)
+            localizer_path = "checkpoints/localizer.pth"
+            torch.save(localizer.state_dict(), localizer_path)
+            print(f"✅ Localizer saved at {localizer_path}")
+        except Exception as e:
+            print(f"⚠️ Localizer not saved: {e}")
+    else:
+        print("⚠️ Localizer model not found, skipping save.")
+
+    # 🔹 Try saving UNet (only if defined)
+    if UNet is not None:
+        try:
+            unet = UNet().to(device)
+            unet_path = "checkpoints/unet.pth"
+            torch.save(unet.state_dict(), unet_path)
+            print(f"✅ UNet saved at {unet_path}")
+        except Exception as e:
+            print(f"⚠️ UNet not saved: {e}")
+    else:
+        print("⚠️ UNet model not found, skipping save.")
+
+    # 🔹 Save classifier artifact in W&B
     artifact = wandb.Artifact("classifier_model", type="model")
-    artifact.add_file(save_path)
+    artifact.add_file(classifier_path)
     wandb.log_artifact(artifact)
 
     wandb.finish()
