@@ -1,0 +1,16 @@
+# Ignore virtual environment
+venv/
+
+# Ignore dataset
+#data/images/
+#data/annotations/
+
+# Ignore checkpoints
+*.pth
+
+# Python cache
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
