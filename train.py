@@ -11,16 +11,9 @@ import wandb
 from data.pets_dataset import OxfordIIITPetDataset
 from models.classification import VGG11Classifier
 
-# 🔹 OPTIONAL: Import if available (won’t break if not used)
-try:
-    from models.localization import Localizer
-except:
-    Localizer = None
-
-try:
-    from models.segmentation import UNet
-except:
-    UNet = None
+# 🔹 ADD THESE IMPORTS (make sure these files exist)
+from models.localization import LocalizerModel
+from models.unet import UNet
 
 
 def train_classifier(
@@ -32,7 +25,6 @@ def train_classifier(
 ):
     """Train VGG11 classifier with W&B logging."""
 
-    # 🔹 Initialize W&B
     wandb.init(
         project="da6401_assignment2",
         config={
@@ -43,24 +35,18 @@ def train_classifier(
         }
     )
 
-    # Dataset
     dataset = OxfordIIITPetDataset(root_dir=data_dir)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    # Model
     model = VGG11Classifier(num_classes=37).to(device)
 
-    # Loss + Optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    # Create checkpoint folder
     os.makedirs("checkpoints", exist_ok=True)
 
-    # 🔹 Watch model (logs gradients & params)
     wandb.watch(model, log="all")
 
-    # Training loop
     for epoch in range(epochs):
         model.train()
         total_loss = 0.0
@@ -69,11 +55,9 @@ def train_classifier(
             images = images.to(device)
             labels = labels.to(device)
 
-            # Forward
             outputs = model(images)
             loss = criterion(outputs, labels)
 
-            # Backward
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -84,53 +68,114 @@ def train_classifier(
 
         print(f"Epoch [{epoch+1}/{epochs}] Loss: {avg_loss:.4f}")
 
-        # 🔹 Log to W&B
         wandb.log({
             "epoch": epoch + 1,
             "train_loss": avg_loss,
             "learning_rate": optimizer.param_groups[0]["lr"]
         })
 
-    # =========================
-    # ✅ SAVE ALL MODELS SAFELY
-    # =========================
+    save_path = "checkpoints/classifier.pth"
+    torch.save(model.state_dict(), save_path)
 
-    # Save classifier
-    classifier_path = "checkpoints/classifier.pth"
-    torch.save(model.state_dict(), classifier_path)
-    print(f"✅ Classifier saved at {classifier_path}")
+    print(f"✅ Classifier saved at {save_path}")
 
-    # 🔹 Try saving Localizer (only if defined)
-    if Localizer is not None:
-        try:
-            localizer = Localizer().to(device)
-            localizer_path = "checkpoints/localizer.pth"
-            torch.save(localizer.state_dict(), localizer_path)
-            print(f"✅ Localizer saved at {localizer_path}")
-        except Exception as e:
-            print(f"⚠️ Localizer not saved: {e}")
-    else:
-        print("⚠️ Localizer model not found, skipping save.")
-
-    # 🔹 Try saving UNet (only if defined)
-    if UNet is not None:
-        try:
-            unet = UNet().to(device)
-            unet_path = "checkpoints/unet.pth"
-            torch.save(unet.state_dict(), unet_path)
-            print(f"✅ UNet saved at {unet_path}")
-        except Exception as e:
-            print(f"⚠️ UNet not saved: {e}")
-    else:
-        print("⚠️ UNet model not found, skipping save.")
-
-    # 🔹 Save classifier artifact in W&B
     artifact = wandb.Artifact("classifier_model", type="model")
-    artifact.add_file(classifier_path)
+    artifact.add_file(save_path)
     wandb.log_artifact(artifact)
 
     wandb.finish()
 
 
+# =========================================================
+# 🔹 NEW: LOCALIZER TRAINING
+# =========================================================
+def train_localizer(data_dir, epochs=10, batch_size=32, lr=1e-4,
+                    device="cuda" if torch.cuda.is_available() else "cpu"):
+
+    dataset = OxfordIIITPetDataset(root_dir=data_dir)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+
+    model = LocalizerModel().to(device)
+
+    criterion = nn.MSELoss()  # bounding box regression
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    os.makedirs("checkpoints", exist_ok=True)
+
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+
+        for images, _, bboxes, _ in dataloader:
+            images = images.to(device)
+            bboxes = bboxes.to(device)
+
+            outputs = model(images)
+            loss = criterion(outputs, bboxes)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(dataloader)
+        print(f"[Localizer] Epoch [{epoch+1}/{epochs}] Loss: {avg_loss:.4f}")
+
+    save_path = "checkpoints/localizer.pth"
+    torch.save(model.state_dict(), save_path)
+
+    print(f"✅ Localizer saved at {save_path}")
+
+
+# =========================================================
+# 🔹 NEW: U-NET TRAINING
+# =========================================================
+def train_unet(data_dir, epochs=10, batch_size=16, lr=1e-4,
+               device="cuda" if torch.cuda.is_available() else "cpu"):
+
+    dataset = OxfordIIITPetDataset(root_dir=data_dir)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+
+    model = UNet().to(device)
+
+    criterion = nn.BCEWithLogitsLoss()  # segmentation mask
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    os.makedirs("checkpoints", exist_ok=True)
+
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+
+        for images, _, _, masks in dataloader:
+            images = images.to(device)
+            masks = masks.to(device)
+
+            outputs = model(images)
+            loss = criterion(outputs, masks)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
+        avg_loss = total_loss / len(dataloader)
+        print(f"[UNet] Epoch [{epoch+1}/{epochs}] Loss: {avg_loss:.4f}")
+
+    save_path = "checkpoints/unet.pth"
+    torch.save(model.state_dict(), save_path)
+
+    print(f"✅ UNet saved at {save_path}")
+
+
+# =========================================================
+# 🔹 MAIN
+# =========================================================
 if __name__ == "__main__":
-    train_classifier(data_dir="data")
+    data_dir = "data"
+
+    train_classifier(data_dir=data_dir)
+    train_localizer(data_dir=data_dir)
+    train_unet(data_dir=data_dir)
