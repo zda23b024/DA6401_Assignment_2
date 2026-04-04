@@ -41,7 +41,7 @@ def load_models(device):
     # Segmentation
     segmenter = VGG11UNet(num_classes=3).to(device)  # 3 classes: background, pet, border
     try:
-        segmenter.load_state_dict(torch.load("checkpoints/unet.pth"), strict=False)
+        segmenter.load_state_dict(torch.load("checkpoints/unet.pth", map_location=device))
         print("✅ Segmentation model loaded")
     except Exception as e:
         print(f"❌ Segmentation load error: {e}")
