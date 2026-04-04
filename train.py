@@ -187,7 +187,8 @@ def train_segmentation(
         total_loss = 0.0
 
         for images, _, _, masks in dataloader:
-            images, masks = images.to(device), masks.to(device).long()  # ✅ convert to Long
+            # images, masks = images.to(device), masks.to(device).long()  
+            images, masks = images.to(device), masks.long().to(device)  # ✅ convert to Long
 
             outputs = model(images)
             loss = criterion(outputs, masks)
