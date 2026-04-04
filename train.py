@@ -175,7 +175,7 @@ def train_segmentation(
     dataset = OxfordIIITPetDataset(root_dir=data_dir, mask=True)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    model = VGG11UNet(num_classes=37).to(device)
+    model = VGG11UNet(num_classes=3).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
