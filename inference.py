@@ -1,102 +1,139 @@
-"""
-Inferences And Evaluation
-"""
+"""Inference and evaluation """
 
-import os
 import torch
 import numpy as np
-from PIL import Image
+import matplotlib.pyplot as plt
 
-# Allowed libraries only
 from models.classification import VGG11Classifier
 from models.localization import VGG11Localizer
 from models.segmentation import VGG11UNet
 
-
-def load_image(image_path):
-    """Load and preprocess image."""
-    image = Image.open(image_path).convert("RGB")
-    image = image.resize((224, 224))
-
-    image = np.array(image).astype(np.float32) / 255.0
-
-    # Normalize (same as training)
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-    image = (image - mean) / std
-
-    # HWC → CHW
-    image = np.transpose(image, (2, 0, 1))
-
-    image = torch.tensor(image, dtype=torch.float32).unsqueeze(0)
-    return image
+from data.pets_dataset import OxfordIIITPetDataset
 
 
 def load_models(device):
-    """Load all trained models."""
+    """Load all trained models"""
 
+    # Classifier
     classifier = VGG11Classifier(num_classes=37).to(device)
-    classifier.load_state_dict(
-        torch.load("checkpoints/classifier.pth", map_location=device)
-    )
+    try:
+        classifier.load_state_dict(
+            torch.load("checkpoints/classifier.pth", map_location=device)
+        )
+        print("✅ Classifier loaded")
+    except:
+        print("⚠️ Could not load classifier")
+
     classifier.eval()
 
+    # Localizer
     localizer = VGG11Localizer().to(device)
-    localizer.load_state_dict(
-        torch.load("checkpoints/localizer.pth", map_location=device)
-    )
+    try:
+        localizer.load_state_dict(
+            torch.load("checkpoints/localizer.pth", map_location=device)
+        )
+        print("✅ Localizer loaded")
+    except:
+        print("⚠️ Could not load localizer")
+
     localizer.eval()
 
-    segmentation = VGG11UNet(num_classes=3).to(device)  # trimap = 3 classes
-    segmentation.load_state_dict(
-        torch.load("checkpoints/segmentation.pth", map_location=device)
+    # Segmentation
+    segmenter = VGG11UNet(num_classes=3).to(device)  # 3 classes: background, pet, border
+    try:
+        segmenter.load_state_dict(torch.load("checkpoints/unet.pth"), strict=False)
+        print("✅ Segmentation model loaded")
+    except Exception as e:
+        print(f"❌ Segmentation load error: {e}")
+
+    segmenter.eval()
+
+    return classifier, localizer, segmenter
+
+
+def predict(classifier, localizer, segmenter, image, device):
+    """Run inference"""
+
+    image = image.unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        cls_out = classifier(image)
+        loc_out = localizer(image)
+        seg_out = segmenter(image)
+
+    pred_class = torch.argmax(cls_out, dim=1).item()
+    bbox = loc_out.squeeze(0).cpu().numpy()
+    seg_mask = torch.argmax(seg_out, dim=1).squeeze(0).cpu().numpy()
+
+    return pred_class, bbox, seg_mask
+
+
+def visualize(image, bbox, seg_mask):
+    """Visualize results"""
+
+    image = image.cpu().permute(1, 2, 0).numpy()
+
+    # ✅ Unnormalize (fix visualization issue)
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    image = std * image + mean
+    image = np.clip(image, 0, 1)
+
+    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+
+    # Image
+    axs[0].imshow(image)
+    axs[0].set_title("Image")
+
+    # Bounding box
+    axs[1].imshow(image)
+    x_c, y_c, w, h = bbox
+    x1 = x_c - w / 2
+    y1 = y_c - h / 2
+
+    rect = plt.Rectangle(
+        (x1, y1), w, h,
+        edgecolor='r',
+        facecolor='none',
+        linewidth=2
     )
-    segmentation.eval()
+    axs[1].add_patch(rect)
+    axs[1].set_title("Bounding Box")
 
-    return classifier, localizer, segmentation
+    # Segmentation
+    axs[2].imshow(seg_mask, cmap="gray")
+    axs[2].set_title("Segmentation")
+
+    for ax in axs:
+        ax.axis("off")
+
+    plt.show()
 
 
-def run_inference(image_path):
-    """Run full pipeline inference on a single image."""
+def run_inference(data_dir="data", index=0):
+    """Run full pipeline"""
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Load image
-    image = load_image(image_path).to(device)
+    # Dataset (mask=True needed for segmentation)
+    dataset = OxfordIIITPetDataset(root_dir=data_dir, mask=True)
+
+    image, label, bbox_gt, mask_gt = dataset[index]
 
     # Load models
-    classifier, localizer, segmentation = load_models(device)
+    classifier, localizer, segmenter = load_models(device)
 
-    with torch.no_grad():
-        # ---- Classification ----
-        class_logits = classifier(image)
-        class_pred = torch.argmax(class_logits, dim=1).item()
+    # Predict
+    pred_class, pred_bbox, pred_mask = predict(
+        classifier, localizer, segmenter, image, device
+    )
 
-        # ---- Localization ----
-        bbox_pred = localizer(image).squeeze(0).cpu().numpy()
+    print(f"Predicted Class: {pred_class}")
+    print(f"Predicted BBox: {pred_bbox}")
 
-        # ---- Segmentation ----
-        seg_logits = segmentation(image)
-        seg_mask = torch.argmax(seg_logits, dim=1).squeeze(0).cpu().numpy()
-
-    return {
-        "class": class_pred,
-        "bbox": bbox_pred,  # [x_center, y_center, width, height]
-        "mask": seg_mask,
-    }
+    # Visualize
+    visualize(image, pred_bbox, pred_mask)
 
 
 if __name__ == "__main__":
-    # Sample Image usage
-    image_path = "data/images/Abyssinian_1.jpg"  # Sample image
-
-
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Image not found: {image_path}")
-
-    results = run_inference(image_path)
-
-    print("\n===== Inference Results =====")
-    print("Predicted Class:", results["class"])
-    print("Predicted Bounding Box:", results["bbox"])
-    print("Segmentation Mask Shape:", results["mask"].shape)
+    run_inference()
