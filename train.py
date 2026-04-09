@@ -221,6 +221,6 @@ if __name__ == "__main__":
     DATA_DIR = "data"
 
     # Train all models sequentially
-    train_classifier(data_dir=DATA_DIR, epochs=10, batch_size=32)
-    train_localizer(data_dir=DATA_DIR, epochs=10, batch_size=32)
+    #train_classifier(data_dir=DATA_DIR, epochs=10, batch_size=32)
+    #train_localizer(data_dir=DATA_DIR, epochs=10, batch_size=32)
     train_segmentation(data_dir=DATA_DIR, epochs=10, batch_size=16)
